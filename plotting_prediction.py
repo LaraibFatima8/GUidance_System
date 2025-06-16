@@ -1,122 +1,122 @@
 import pygame
 import serial
 
-# --- Serial Setup ---
+# Serial setup
 try:
     ser = serial.Serial('COM7', 9600, timeout=1)
 except:
     ser = None
     print("[WARNING] Serial port COM7 could not be opened.")
 
-# --- Constants ---
-WIDTH, HEIGHT = 1280, 720
-SERVO_MIN = 26      # Approx 0°
-SERVO_MAX = 230     # Approx 180°
-SERVO_RANGE = SERVO_MAX - SERVO_MIN
-GRID_DIV = 10       # Grid divisions
+# GUI setup
+WIDTH, HEIGHT = 900, 500
+CENTER_X, CENTER_Y = WIDTH // 2, HEIGHT // 2
+SERVO_CENTER = 90
+GRID_DIV = 10
 
-# --- Pygame Setup ---
 pygame.init()
 font = pygame.font.SysFont("Arial", 20)
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Scaled UART Servo Controller")
+pygame.display.set_caption("Missile Prediction GUI (Corrected Quadrants)")
 clock = pygame.time.Clock()
 
-# --- Object State ---
-x, y = WIDTH // 2, HEIGHT // 2
+# Object position
+x, y = CENTER_X, CENTER_Y
 speed = 5
 auto_sweep = False
 sweep_dir = 1
 running = True
 
-# --- Main Loop ---
-pred_x = None
-pred_y = None
+# Values from FPGA
+servo_x = servo_y = pred_x = pred_y = None
 
 while running:
-    screen.fill((20, 20, 20))  # Background color
+    screen.fill((20, 20, 20))
 
-    # --- Grid Drawing ---
+    # Grid and axes
     for i in range(GRID_DIV + 1):
         pygame.draw.line(screen, (50, 50, 50), (i * WIDTH // GRID_DIV, 0), (i * WIDTH // GRID_DIV, HEIGHT))
         pygame.draw.line(screen, (50, 50, 50), (0, i * HEIGHT // GRID_DIV), (WIDTH, i * HEIGHT // GRID_DIV))
+    pygame.draw.line(screen, (150, 150, 150), (CENTER_X, 0), (CENTER_X, HEIGHT), 2)
+    pygame.draw.line(screen, (150, 150, 150), (0, CENTER_Y), (WIDTH, CENTER_Y), 2)
 
-    # --- Event Handling ---
+    # Keyboard controls
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-        elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_a:
-                auto_sweep = not auto_sweep
+        elif event.type == pygame.KEYDOWN and event.key == pygame.K_a:
+            auto_sweep = not auto_sweep
 
-    # --- Key Controls ---
     keys = pygame.key.get_pressed()
-    if keys[pygame.K_LEFT]:
-        x = max(0, x - speed)
-    if keys[pygame.K_RIGHT]:
-        x = min(WIDTH - 1, x + speed)
-    if keys[pygame.K_UP]:
-        y = max(0, y - speed)
-    if keys[pygame.K_DOWN]:
-        y = min(HEIGHT - 1, y + speed)
-    if keys[pygame.K_SPACE]:
-        x = 0
-    if keys[pygame.K_RETURN]:
-        x = WIDTH - 1
+    if keys[pygame.K_LEFT]:  x = max(0, x - speed)
+    if keys[pygame.K_RIGHT]: x = min(WIDTH - 1, x + speed)
+    if keys[pygame.K_UP]:    y = max(0, y - speed)
+    if keys[pygame.K_DOWN]:  y = min(HEIGHT - 1, y + speed)
+    if keys[pygame.K_SPACE]: x, y = CENTER_X, CENTER_Y
 
-    # --- Auto Sweep ---
     if auto_sweep:
         x += sweep_dir
-        if x >= WIDTH:
-            x = WIDTH
-            sweep_dir = -1
-        elif x <= 0:
-            x = 0
-            sweep_dir = 1
+        if x >= WIDTH or x <= 0:
+            sweep_dir *= -1
 
-    # --- Scale to Servo Range ---
-    scaled_x = int(SERVO_MIN + (x / WIDTH) * SERVO_RANGE)
-    scaled_y = int(SERVO_MIN + (y / HEIGHT) * SERVO_RANGE)
-    scaled_x = max(SERVO_MIN, min(SERVO_MAX, scaled_x))
-    scaled_y = max(SERVO_MIN, min(SERVO_MAX, scaled_y))
+    # Calculate logic from object manually (your green dot)
+    logic_x = x - CENTER_X
+    logic_y = CENTER_Y - y
 
-    # --- Send UART ---
+    # Send position to FPGA
+    send_servo_x = SERVO_CENTER + int(logic_x * 90 / (WIDTH // 2))
+    send_servo_y = SERVO_CENTER + int(logic_y * 90 / (HEIGHT // 2))
+    send_servo_x = max(0, min(180, send_servo_x))
+    send_servo_y = max(0, min(180, send_servo_y))
+
     if ser and ser.is_open:
         try:
-            ser.write(bytes([scaled_y, scaled_x]))  # Y then X
-        except serial.SerialException as e:
-            print(f"[UART ERROR] {e}")
-
-    # --- Receive Predicted Position (if available) ---
-    if ser and ser.in_waiting >= 2:
-        try:
-            pred_y = int.from_bytes(ser.read(), "big")
-            pred_x = int.from_bytes(ser.read(), "big")
+            ser.write(bytes([send_servo_y, send_servo_x]))
         except:
-            pred_x = pred_y = None
+            pass
 
-    # --- Draw actual position (green) ---
-    draw_x = int(((scaled_x - SERVO_MIN) / SERVO_RANGE) * WIDTH)
-    draw_y = int(((scaled_y - SERVO_MIN) / SERVO_RANGE) * HEIGHT)
-    pygame.draw.circle(screen, (0, 255, 0), (draw_x, draw_y), 10)
+    # Receive prediction + servo feedback
+    if ser and ser.in_waiting >= 4:
+        try:
+            pred_y  = int.from_bytes(ser.read(), "big")
+            pred_x  = int.from_bytes(ser.read(), "big")
+            servo_y = int.from_bytes(ser.read(), "big")
+            servo_x = int.from_bytes(ser.read(), "big")
 
-    # --- Draw predicted position (red) ---
+            if (servo_x, servo_y) == (0, 0): servo_x = servo_y = None
+            if (pred_x, pred_y) == (0, 0): pred_x = pred_y = None
+        except:
+            servo_x = servo_y = pred_x = pred_y = None
+
+    # Draw green current position
+    pygame.draw.circle(screen, (0, 255, 0), (x, y), 10)
+
+    # Draw prediction (Red)
     if pred_x is not None and pred_y is not None:
-        pred_draw_x = int((pred_x / 255) * WIDTH)
-        pred_draw_y = int((pred_y / 255) * HEIGHT)
+        pred_draw_x = int(CENTER_X + (pred_x - 90) * (WIDTH / 2 / 90))
+        pred_draw_y = int(CENTER_Y - (pred_y - 90) * (HEIGHT / 2 / 90))
         pygame.draw.circle(screen, (255, 0, 0), (pred_draw_x, pred_draw_y), 10)
 
-    # --- Debug Info ---
-    info_text = f"GUI X={x}, Y={y} | Servo X={scaled_x}, Y={scaled_y}"
-    if pred_x is not None and pred_y is not None:
-        info_text += f" | Pred X={pred_x}, Y={pred_y}"
-    screen.blit(font.render(info_text, True, (255, 255, 255)), (10, 10))
+    # Draw servo received (Blue)
+    logic_servo_x = logic_servo_y = None
+    if servo_x is not None and servo_y is not None:
+        logic_servo_x = (servo_x - 90) * (WIDTH / 2 / 90)
+        logic_servo_y = (servo_y - 90) * (HEIGHT / 2 / 90)
+        draw_servo_x = int(CENTER_X + logic_servo_x)
+        draw_servo_y = int(CENTER_Y - logic_servo_y)
+        pygame.draw.circle(screen, (0, 0, 255), (draw_servo_x, draw_servo_y), 10)
 
-    # --- Refresh ---
+    # Text Display
+    text = f"Green Obj XY: ({logic_x}, {logic_y})"
+    if servo_x is not None:
+        text += f" | Blue ServoXY: ({servo_x},{servo_y}) → ({int(logic_servo_x)}, {int(logic_servo_y)})"
+    if pred_x is not None:
+        text += f" | Red PredXY: ({pred_x},{pred_y})"
+    screen.blit(font.render(text, True, (255, 255, 255)), (10, 10))
+
     pygame.display.flip()
     clock.tick(30)
 
-# --- Cleanup ---
 if ser:
     ser.close()
 pygame.quit()

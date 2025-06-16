@@ -1,0 +1,8 @@
+NET "clk50mhz" LOC = "C9" | IOSTANDARD = LVCMOS33 | PERIOD = 20ns;
+NET "uart_rx" LOC = "U8" | IOSTANDARD = LVCMOS33 | PULLUP;
+
+# Servo A output (J4<0>)
+NET "servo_pwm_out_a" LOC = "D7" | IOSTANDARD = LVCMOS33;
+
+# Servo B output (J4<1>)
+NET "servo_pwm_out_b" LOC = "C7" | IOSTANDARD = LVCMOS33;

@@ -125,8 +125,9 @@ module missile_predictor_fpga(
             pwm_cnt <= pwm_cnt + 1;
     end
 
-    wire [19:0] pulse_x = 20'd50000 + x_pos * 20'd196;
-    wire [19:0] pulse_y = 20'd50000 + y_pos * 20'd196;
+    wire [19:0] pulse_x = 20'd25000 + x_pos * 20'd294; // (0.5ms to 2.5ms range)
+
+    wire [19:0] pulse_y = 20'd50000 + y_pos * 20'd294;
 
     always @(posedge clk50mhz) begin
         servo_pwm_out_x <= (pwm_cnt < pulse_x);

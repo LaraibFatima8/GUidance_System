@@ -45,7 +45,7 @@ module missile_predictor_fpga(
         end
     end
 
-    // Position history for 20 meaningful frames (only if movement occurs)
+    // Position history for 20 meaningful frames
     reg [7:0] x_history [0:19];
     reg [7:0] y_history [0:19];
     integer i;
@@ -58,7 +58,28 @@ module missile_predictor_fpga(
     reg [7:0] x_pos = 128;
     reg [7:0] y_pos = 128;
 
+    reg reset_samples = 0;
+
+    // Prediction logic
+    wire signed [8:0] dx = x_history[19] - x_history[0];
+    wire signed [8:0] dy = y_history[19] - y_history[0];
+
+    wire signed [8:0] vx = dx >>> 4;  // Approx divide by 16
+    wire signed [8:0] vy = dy >>> 4;
+
+    wire signed [8:0] pred_x = x_history[19] + vx * 10;
+    wire signed [8:0] pred_y = y_history[19] + vy * 10;
+
+    wire [7:0] final_x = (pred_x < 0) ? 0 : (pred_x > 255) ? 255 : pred_x[7:0];
+    wire [7:0] final_y = (pred_y < 0) ? 0 : (pred_y > 255) ? 255 : pred_y[7:0];
+
+    // Main control block (handles reset_samples in one place)
     always @(posedge clk50mhz) begin
+        if (reset_samples) begin
+            sample_count <= 0;
+            reset_samples <= 0;
+        end
+
         if (data_ready) begin
             if (byte_state == 0) begin
                 uart_x <= rx_data;
@@ -83,36 +104,19 @@ module missile_predictor_fpga(
                 end
             end
         end
-    end
 
-    // Prediction logic (directionally correct)
-    wire signed [8:0] dx = x_history[19] - x_history[0];
-    wire signed [8:0] dy = y_history[19] - y_history[0];
-
-wire signed [8:0] vx = dx >>> 4;  // Approx divide by 16
-wire signed [8:0] vy = dy >>> 4;
-
-    wire signed [8:0] pred_x = x_history[19] + vx * 10; // predict 10 future frames
-    wire signed [8:0] pred_y = y_history[19] + vy * 10;
-
-    wire [7:0] final_x = (pred_x < 0) ? 0 : (pred_x > 255) ? 255 : pred_x[7:0];
-    wire [7:0] final_y = (pred_y < 0) ? 0 : (pred_y > 255) ? 255 : pred_y[7:0];
-
-    // Update servo position only after enough movement samples collected
-    always @(posedge clk50mhz) begin
         if (data_ready && byte_state == 0 && sample_count == 20) begin
             predict_counter <= predict_counter + 1;
-if (predict_counter == 10) begin
-    x_pos <= final_x;
-    y_pos <= final_y;
-    predict_counter <= 0;
-    sample_count <= 0;  // reset history window
-end
-
+            if (predict_counter == 10) begin
+                x_pos <= final_x;
+                y_pos <= final_y;
+                predict_counter <= 0;
+                reset_samples <= 1;
+            end
         end
     end
 
-    // PWM generation
+    // PWM generation for servos
     reg [19:0] pwm_cnt = 0;
     always @(posedge clk50mhz) begin
         if (pwm_cnt >= 20'd999_999)
